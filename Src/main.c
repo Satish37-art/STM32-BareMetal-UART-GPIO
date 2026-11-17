@@ -25,11 +25,12 @@
 #endif
 
 
+
 void UART2_SendChar(char c) {
     // Check the Status Register (SR) and isolate Bit 7 (TXE)
     // The "!" means NOT. So this reads: "While Bit 7 is NOT 1, just sit here and wait."
     while (!(USART2->SR & (1 << 7))) {
-        // CPU spins here doing nothing, waiting for the Green Light
+    // CPU spins here doing nothing, waiting for the Green Light
     }
 
     // Once Bit 7 becomes 1, the loop breaks.
@@ -37,39 +38,65 @@ void UART2_SendChar(char c) {
     USART2->DR = c;
 }
 
+void EXTI15_10_IRQHandler(void) {
+    // Check if the interrupt was specifically triggered by Line 13
+    if (EXTI->PR & (1 << 13)) {
+
+    // Perform our action: Send the character
+        UART2_SendChar('P');
+
+    // Clear the pending flag by writing a 1 to it
+        EXTI->PR |= (1 << 13);
+    }
+}
 
 
 int main(void) {
-    // 1. Enable clocks for GPIOA (Bit 0) and GPIOC (Bit 2) on AHB1 Bus
+    // Enable clocks for GPIOA (Bit 0) and GPIOC (Bit 2) on AHB1 Bus
     RCC->AHB1ENR |= (1 << 0) | (1 << 2);
 
-    // 2. Enable clock for USART2 (Bit 17) on APB1 Bus
+    // Enable clock for SYSCFG on APB2 Bus (Bit 14)
+        RCC->APB2ENR |= (1 << 14);
+
+    // Enable clock for USART2 (Bit 17) on APB1 Bus
     RCC->APB1ENR |= (1 << 17);
 
-    // 3. Configure PC13 as Input (Mode 00)
+    // Configure PC13 as Input (Mode 00)
     GPIOC->MODER &= ~(3U << 26);
 
-    // 4. Configure PA2 and PA3 as Alternate Function (Mode 10)
+    // Wire the Alarm: Connect EXTI Line 13 to Port C (PC13)
+    // EXTICR[3] controls Line 13. We clear the 4 bits, then write '2' to select Port C.
+        SYSCFG->EXTICR[3] &= ~(0xFU << 4);
+        SYSCFG->EXTICR[3] |=  (2U << 4);
+
+    // Set the Rule: Trigger on a Falling Edge
+    // When the button is pressed, voltage falls from 3.3V to 0V.
+        EXTI->FTSR |= (1 << 13);
+
+        // Turn the Alarm On: Unmask EXTI Line 13
+        // "Masking" means hiding the signal. We unmask it so the signal is allowed to pass.
+        EXTI->IMR |= (1 << 13);
+
+    // Configure PA2 and PA3 as Alternate Function (Mode 10)
     GPIOA->MODER &= ~((3U << 4) | (3U << 6));
     GPIOA->MODER |=  ((2U << 4) | (2U << 6));
 
-    // 5. Connect PA2 and PA3 to USART2 (AF7)
+    // Connect PA2 and PA3 to USART2 (AF7)
     GPIOA->AFR[0] &= ~((0xFU << 8) | (0xFU << 12));
     GPIOA->AFR[0] |=  ((7U << 8) | (7U << 12));
 
-    // 6. Set the Baud Rate to 9600 (Assuming 16 MHz APB1 Clock)
+    // Set the Baud Rate to 9600 (Assuming 16 MHz APB1 Clock)
     USART2->BRR = 1667;
 
-    // 7. Enable USART2 (Bit 13) and enable the Transmitter (Bit 3)
+    // Enable USART2 (Bit 13) and enable the Transmitter (Bit 3)
     USART2->CR1 |= (1 << 13) | (1 << 3);
 
+    //  Wake up the CPU's Interrupt Manager (NVIC)
+    // Enable the shared interrupt for EXTI Lines 10 through 15
+     NVIC_EnableIRQ(EXTI15_10_IRQn);
     while (1) {
-            // Check if Bit 13 of GPIOC_IDR is 0 (Button Pressed)
-            if (!(GPIOC->IDR & (1 << 13))) {
-                UART2_SendChar('P');
-
-                // Simple software delay for button debouncing
-                for (volatile int i = 0; i < 300000; i++);
+          // CPU is completely free
+    	// Waiting for the hardware interrupt to fire.
             }
         }
-}
+
